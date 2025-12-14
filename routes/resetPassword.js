@@ -1,59 +1,82 @@
-import express from 'express';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import User from '../models/User.js';
-import nodemailer from 'nodemailer';
-import crypto from 'crypto';
-
-let resetTokens = {}; //Temporary store for reset tokens
+import express from "express";
+import bcrypt from "bcryptjs";
+import crypto from "crypto";
+import User from "../models/User.js";
+import nodemailer from "nodemailer";
 
 const router = express.Router();
 
-//request password reset
-router.post('/request-reset', async(req, res) =>{
-    const { email } = req.body;
-    const user = await User.findOne({ email });
-
-    if (!user) return res.status(404).json({ message: 'User not found' });
-
-    const token = crypto.randomBytes(20).toString('hex');
-    resetTokens[email] = token;
-
-    //Setup Email
-    const transporter = nodemailer.createTransport({
-        service: 'gmail',
-        auth: {
-            user: 'abnowellah@gmail.com',
-            pass: "cgdncccqvwevwhje"
-        },
-    });
-
-    const mailOptions = {
-        from:'abnowellah@gmail.com',
-        to: email,
-        subject: 'Password Reset',
-        text: `Use this token to reset your password: ${token}`,
-    };
-    transporter.sendMail(mailOptions, (err, info) => {
-        if (err) return res.status(500).json({ message: 'Error sending email' });
-        res.json({ message: 'Reset email sent' });
-    });
+// Setup reusable transporter
+const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+    },
 });
 
-//confirm reset token and update password
-router.post('/reset-password', async(req, res)=>{
-    const {email, token, newPassword} = req.body;
+// Request password reset
+router.post("/request-reset", async (req, res, next) => {
+    const { email } = req.body;
 
-    if (resetTokens[email] !== token) {
-        return res.status(400).json({ message: 'invalid or expired token' });
+    try {
+        const user = await User.findOne({ email });
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        // Generate reset token
+        const token = crypto.randomBytes(32).toString("hex");
+        user.resetToken = token;
+        user.resetTokenExpiry = Date.now() + 3600000; // 1 hour expiry
+        await user.save();
+
+        const resetLink = `http://localhost:5000/api/password/reset/${token}`;
+
+        await transporter.sendMail({
+            from: process.env.EMAIL_USER,
+            to: email,
+            subject: "Password Reset",
+            html: `
+        <p>You requested a password reset.</p>
+        <p>Click <a href="${resetLink}">here</a> to reset your password.</p>
+        <p>If you did not request this, please ignore this email.</p>
+      `,
+        });
+
+        res.json({ message: "Password reset link sent to your email." });
+    } catch (err) {
+        next(err);
     }
+});
 
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    await User.updateOne({ email }, { password: hashedPassword });
+// Confirm reset token and update password
+router.post("/reset-password/:token", async (req, res, next) => {
+    const { token } = req.params;
+    const { newPassword } = req.body;
 
-delete resetTokens[email]; //remove token after use
+    try {
+        const user = await User.findOne({
+            resetToken: token,
+            resetTokenExpiry: { $gt: Date.now() }, // ensure token not expired
+        });
 
-    res.json({ message: 'Password reset successful' });
+        if (!user) {
+            return res.status(400).json({ message: "Invalid or expired token" });
+        }
+
+        // Hash new password
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        user.password = hashedPassword;
+
+        // Clear reset token fields
+        user.resetToken = undefined;
+        user.resetTokenExpiry = undefined;
+
+        await user.save();
+
+        res.json({ message: "Password reset successful" });
+    } catch (err) {
+        next(err);
+    }
 });
 
 export default router;
