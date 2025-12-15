@@ -1,22 +1,18 @@
-import jwt from 'jsonwebtoken';
-import User from '../models/User';
-
-const adminOnly = async(req, res, next) => {
-    try  {
-        const token = req.headers.authorization?.split(" ")[1];
-        if(!token) return res.status(401).json({ message: "access denied" });
-
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const user = await User.findById(decoded.id);
-        
-        if(!user || user.role !== 'admin') {
-            return res.status(403).json({ message: 'Admin access only' });
-        }
-        req.user = user;
-        next();
-    } catch(err){
-        res.status(500).json({ message: 'Server error' });
+export default function adminMiddleware(req, res, next) {
+  try {
+    // Ensure user is attached by authMiddleware
+    if (!req.user) {
+      return res.status(401).json({ message: 'Unauthorized: no user found' });
     }
-};
 
-module.exports = adminOnly;
+    // Check role
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Admin access only' });
+    }
+
+    next();
+  } catch (err) {
+    console.error('Admin middleware error:', err);
+    next(err); // Pass to global error handler
+  }
+}
