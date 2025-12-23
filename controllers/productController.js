@@ -1,23 +1,24 @@
-// controllers/productController.js
-import Product from '../models/Product.js';
+import axios from 'axios';
 
-// @desc Get all products 
+const STRAPI_URL = process.env.STRAPI_URL || 'http://localhost:1337';
+
+// @desc Get all products (with optional filters)
 // @route GET /api/products
 export const getProducts = async (req, res, next) => {
   try {
     const { category, search, minPrice, maxPrice } = req.query;
 
-    let query = {};
-    if (category) query.category = category;
-    if (search) query.name = { $regex: search, $options: 'i' };
-    if (minPrice || maxPrice) {
-      query.price = {};
-      if (minPrice) query.price.$gte = Number(minPrice);
-      if (maxPrice) query.price.$lte = Number(maxPrice);
-    }
+    // Build Strapi query params
+    let filters = [];
+    if (category) filters.push(`filters[category][name][$eq]=${category}`);
+    if (search) filters.push(`filters[name][$containsi]=${search}`);
+    if (minPrice) filters.push(`filters[price][$gte]=${minPrice}`);
+    if (maxPrice) filters.push(`filters[price][$lte]=${maxPrice}`);
 
-    const products = await Product.find(query);
-    res.json(products);
+    const queryString = filters.length > 0 ? `?${filters.join('&')}&populate=*` : '?populate=*';
+
+    const response = await axios.get(`${STRAPI_URL}/api/products${queryString}`);
+    res.json(response.data);
   } catch (error) {
     next(error);
   }
@@ -27,9 +28,11 @@ export const getProducts = async (req, res, next) => {
 // @route GET /api/products/:id
 export const getProductById = async (req, res, next) => {
   try {
-    const product = await Product.findById(req.params.id);
-    if (!product) return res.status(404).json({ message: 'Product not found' });
-    res.json(product);
+    const response = await axios.get(`${STRAPI_URL}/api/products/${req.params.id}?populate=*`);
+    if (!response.data || !response.data.data) {
+      return res.status(404).json({ message: 'Product not found' });
+    }
+    res.json(response.data);
   } catch (error) {
     next(error);
   }
@@ -41,18 +44,11 @@ export const createProduct = async (req, res, next) => {
   try {
     const { name, description, price, category, brand, stock, image } = req.body;
 
-    const newProduct = new Product({
-      name,
-      description,
-      price,
-      category,
-      brand,
-      stock,
-      image,
+    const response = await axios.post(`${STRAPI_URL}/api/products`, {
+      data: { name, description, price, category, brand, stock, image },
     });
 
-    await newProduct.save();
-    res.status(201).json({ message: 'Product created successfully', product: newProduct });
+    res.status(201).json({ message: 'Product created successfully', product: response.data });
   } catch (error) {
     next(error);
   }
@@ -62,14 +58,11 @@ export const createProduct = async (req, res, next) => {
 // @route PUT /api/products/:id
 export const updateProduct = async (req, res, next) => {
   try {
-    const updatedProduct = await Product.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      { new: true }
-    );
+    const response = await axios.put(`${STRAPI_URL}/api/products/${req.params.id}`, {
+      data: req.body,
+    });
 
-    if (!updatedProduct) return res.status(404).json({ message: 'Product not found' });
-    res.json({ message: 'Product updated successfully', product: updatedProduct });
+    res.json({ message: 'Product updated successfully', product: response.data });
   } catch (error) {
     next(error);
   }
@@ -79,9 +72,7 @@ export const updateProduct = async (req, res, next) => {
 // @route DELETE /api/products/:id
 export const deleteProduct = async (req, res, next) => {
   try {
-    const deletedProduct = await Product.findByIdAndDelete(req.params.id);
-    if (!deletedProduct) return res.status(404).json({ message: 'Product not found' });
-
+    await axios.delete(`${STRAPI_URL}/api/products/${req.params.id}`);
     res.json({ message: 'Product deleted successfully' });
   } catch (error) {
     next(error);
